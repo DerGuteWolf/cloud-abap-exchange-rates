@@ -1,12 +1,10 @@
 CLASS zcl_ecb_exchange_rates_xml DEFINITION
   PUBLIC
-  FINAL
   CREATE PUBLIC .
 
   PUBLIC SECTION.
     INTERFACES if_oo_adt_classrun.
   PROTECTED SECTION.
-  PRIVATE SECTION.
     "!  URL to ECB currency exchange rates in XML format
     "!  Exchange rate information is provided by the European Central Bank through their API portal
     "!  Please refer to https://www.ecb.europa.eu/home/disclaimer/html/index.en.html for disclaimer
@@ -21,17 +19,15 @@ CLASS zcl_ecb_exchange_rates_xml DEFINITION
         name   TYPE string,
         attr   TYPE string,
         value  TYPE string,
-      END OF ty_entry.
-    CLASS-DATA t_entry TYPE TABLE OF ty_entry.
-    "!   retrieved information for display; may be omitted if processed in "dark mode"
-    CLASS-DATA g_result TYPE cl_exchange_rates=>ty_messages.
-    CLASS-DATA            g_rates  TYPE cl_exchange_rates=>ty_exchange_rates.
+      END OF ty_entry,
+      ty_entries TYPE TABLE OF ty_entry.
     "!   method to retrieve the exchange rates from the ECB as json file
-    CLASS-METHODS get_rates RETURNING VALUE(exchangerates) TYPE xstring.
+    METHODS get_rates CHANGING messages TYPE cl_exchange_rates=>ty_messages RETURNING VALUE(exchangerates) TYPE xstring.
     "!   method to process the currency exchange rates
-    CLASS-METHODS parse_rates IMPORTING exchangerates TYPE xstring.
+    METHODS parse_rates IMPORTING exchangerates TYPE xstring EXPORTING entries TYPE ty_entries.
     "!   method to store the rates in the system
-    CLASS-METHODS store_rates.
+    METHODS store_rates IMPORTING entries TYPE ty_entries EXPORTING rates TYPE cl_exchange_rates=>ty_exchange_rates CHANGING messages TYPE cl_exchange_rates=>ty_messages.
+  PRIVATE SECTION.
 ENDCLASS.
 
 
@@ -40,10 +36,11 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
 
 
   METHOD if_oo_adt_classrun~main.
-    parse_rates( get_rates(  ) ).
-    store_rates(  ).
-    out->write( data = g_rates ).
-    out->write( data = g_result ).
+    DATA messages TYPE cl_exchange_rates=>ty_messages.
+    parse_rates( EXPORTING exchangerates = get_rates( CHANGING messages = messages ) IMPORTING entries = DATA(entries) ).
+    store_rates( EXPORTING entries = entries IMPORTING rates = DATA(rates) CHANGING messages = messages ).
+    out->write( data = rates ).
+    out->write( data = messages ).
   ENDMETHOD.
 
 
@@ -57,7 +54,7 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
         exchangerates = lo_response->get_binary( ).
       CATCH cx_root INTO DATA(lx_exception).
 *         perform convenient error handling; in a PoC this just works ;-)
-        APPEND VALUE #( type = 'E' message = 'http error' ) TO g_result.
+        APPEND VALUE #( type = 'E' message = 'http error' ) TO messages.
     ENDTRY.
   ENDMETHOD.
 
@@ -92,14 +89,14 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
           LOOP AT attributes INTO DATA(attribute).
             w_entry-attr  = attribute->qname-name.
             w_entry-value = attribute->get_value( ).
-            APPEND w_entry TO t_entry.
+            APPEND w_entry TO entries.
           ENDLOOP.
           CONTINUE.
         WHEN if_sxml_node=>co_nt_value.
           DATA(value_node) = CAST if_sxml_value_node( node ).
           w_entry-name = open_element->qname-name.
           w_entry-value = value_node->get_value( ).
-          APPEND w_entry TO t_entry.
+          APPEND w_entry TO entries.
           CONTINUE.
         WHEN if_sxml_node=>co_nt_element_close.
           w_entry-level = w_entry-level - 1.
@@ -119,7 +116,7 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
           rate_to_store(16) TYPE p DECIMALS 5,
           l_result          TYPE cl_exchange_rates=>ty_messages.
 
-    LOOP AT t_entry INTO w_entry.
+    LOOP AT entries INTO w_entry.
 *     process the actual rates
       w_rate-rate_type = 'EURX'.
       w_rate-from_curr = 'EUR'.
@@ -148,7 +145,7 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
           INTO @factor.
           IF sy-subrc <> 0.
 *       no rate is an error, skip.
-            APPEND VALUE #( type = 'E' message = 'No factor found for' message_v1 = gc_rate_type message_v2 = gc_base message_v3 = w_rate-to_currncy ) TO g_result.
+            APPEND VALUE #( type = 'E' message = 'No factor found for' message_v1 = gc_rate_type message_v2 = gc_base message_v3 = w_rate-to_currncy ) TO messages.
             CONTINUE.
           ENDIF.
           w_rate-from_factor = factor-numberofsourcecurrencyunits.
@@ -158,7 +155,7 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
           rate_to_store = w_entry-value * factor-numberofsourcecurrencyunits / factor-numberoftargetcurrencyunits.
           w_rate-exch_rate = rate_to_store.
           w_rate-exch_rate_v = 0.
-          APPEND w_rate TO g_rates.
+          APPEND w_rate TO rates.
 *         and the inverted value
           w_rate-from_curr = w_rate-to_currncy.
           w_rate-to_currncy = gc_base.
@@ -169,12 +166,12 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
           rate_to_store = w_rate-to_factor_v * w_entry-value / w_rate-from_factor_v.
           w_rate-exch_rate   = 0.
           w_rate-exch_rate_v = rate_to_store.
-          APPEND w_rate TO g_rates.
+          APPEND w_rate TO rates.
       ENDCASE.
     ENDLOOP.
 *   now write the currency exchange rates
-    l_result = cl_exchange_rates=>put( EXPORTING exchange_rates = g_rates ).
+    l_result = cl_exchange_rates=>put( EXPORTING exchange_rates = rates ).
 *   local result is used in case errors from factor retrieval should also be stored.
-    APPEND LINES OF l_result TO g_result.
+    APPEND LINES OF l_result TO messages.
   ENDMETHOD.
 ENDCLASS.
