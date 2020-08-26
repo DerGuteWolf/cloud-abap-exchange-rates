@@ -52,9 +52,9 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
         DATA(lo_request) = lo_http_client->get_http_request( ).
         DATA(lo_response) = lo_http_client->execute( i_method = if_web_http_client=>get ).
         exchangerates = lo_response->get_binary( ).
-      CATCH cx_root INTO DATA(lx_exception).
-*         perform convenient error handling; in a PoC this just works ;-)
-        APPEND VALUE #( type = 'E' message = 'http error' ) TO messages.
+      CATCH cx_http_dest_provider_error cx_web_http_client_error cx_web_message_error  INTO DATA(lx_exception).
+        " log error
+        APPEND VALUE #( type = 'E'  id = 'E!' number = 025 message_v1 = 'http error' message_v2 = CAST if_message( lx_exception )->get_text( )  ) TO messages.
     ENDTRY.
   ENDMETHOD.
 
@@ -144,8 +144,8 @@ CLASS zcl_ecb_exchange_rates_xml IMPLEMENTATION.
              AND validitystartdate <= @w_rate-valid_from
           INTO @factor.
           IF sy-subrc <> 0.
-*       no rate is an error, skip.
-            APPEND VALUE #( type = 'E' message = 'No factor found for' message_v1 = gc_rate_type message_v2 = gc_base message_v3 = w_rate-to_currncy ) TO messages.
+            " no rate is an error, log and skip.
+            APPEND VALUE #( type = 'E' id = 'E!' number = 025 message_v1 = gc_rate_type message_v2 = gc_base message_v3 = w_rate-to_currncy ) TO messages.
             CONTINUE.
           ENDIF.
           w_rate-from_factor = factor-numberofsourcecurrencyunits.
